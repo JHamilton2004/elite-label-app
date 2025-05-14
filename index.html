@@ -6,7 +6,7 @@
   <title>Elite Electronics Label Tracker</title>
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-    import { getFirestore, collection, addDoc, getDocs, onSnapshot, deleteDoc, doc, updateDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+    import { getFirestore, collection, addDoc, getDocs, onSnapshot, deleteDoc, doc, updateDoc, query, orderBy } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
     const firebaseConfig = {
       apiKey: "AIzaSyBvnJHyOJUWKLtC9fNiGZ5vNcThcNSoV-E",
@@ -41,7 +41,7 @@
 
     async function saveLabel() {
       const data = getFormData();
-      if (!data.company || !data.date) return alert("Company and Date are required");
+      if (!data.company || !data.date || !data.productCode) return alert("Company, Date, and Product Code are required");
       await addDoc(collection(db, "labels"), data);
     }
 
@@ -51,34 +51,69 @@
       }
     }
 
-    function renderLabels(snapshot) {
-      labelPreview.innerHTML = "";
+    function groupLabelsByMonthCompanyPart(snapshot) {
+      const grouped = {};
       snapshot.forEach(docSnap => {
         const data = docSnap.data();
-        if (filterCompany.value && filterCompany.value !== data.company) return;
-        if (filterDate.value && filterDate.value !== data.date) return;
-        const div = document.createElement("div");
-        div.className = "label-card";
-        div.innerHTML = `
-          <strong>${data.company}</strong> | <small>${data.date}</small><br>
-          Product Code: ${data.productCode}<br>
-          Batch Number: ${data.batchNumber}<br>
-          Serial Number Range: ${data.serialRange}<br>
-          Rev: ${data.rev} | CN: ${data.cn}<br>
-          Week Number: ${data.weekNumber} | Quantity: ${data.quantity}<br>
-          Printed By: ${data.printedBy}<br>
-          Notes: ${data.notes}<br>
-          <button onclick='fillForm(${JSON.stringify(data)}); deleteLabel("${docSnap.id}")'>Edit</button>
-          <button onclick='deleteLabel("${docSnap.id}")'>Delete</button>
-        `;
-        labelPreview.appendChild(div);
+        const date = new Date(data.date);
+        const monthKey = `${date.toLocaleString('default', { month: 'long' })} ${date.getFullYear()}`;
+        if (!grouped[monthKey]) grouped[monthKey] = {};
+
+        if (!grouped[monthKey][data.company]) grouped[monthKey][data.company] = {};
+
+        if (!grouped[monthKey][data.company][data.productCode]) grouped[monthKey][data.company][data.productCode] = [];
+
+        grouped[monthKey][data.company][data.productCode].push({ id: docSnap.id, ...data });
+      });
+      return grouped;
+    }
+
+    function renderGroupedLabels(snapshot) {
+      labelPreview.innerHTML = "";
+      const grouped = groupLabelsByMonthCompanyPart(snapshot);
+
+      Object.keys(grouped).forEach(month => {
+        const monthDiv = document.createElement("div");
+        monthDiv.innerHTML = `<h3>${month}</h3>`;
+
+        Object.keys(grouped[month]).forEach(company => {
+          const companyDiv = document.createElement("div");
+          companyDiv.innerHTML = `<h4 style='margin-left: 10px;'>${company}</h4>`;
+
+          Object.keys(grouped[month][company]).forEach(part => {
+            const partDiv = document.createElement("div");
+            partDiv.innerHTML = `<h5 style='margin-left: 20px;'>Part Number: ${part}</h5>`;
+
+            grouped[month][company][part].forEach(label => {
+              const div = document.createElement("div");
+              div.className = "label-card";
+              div.innerHTML = `
+                <strong>${label.company}</strong> | <small>${label.date}</small><br>
+                Product Code: ${label.productCode}<br>
+                Batch Number: ${label.batchNumber}<br>
+                Serial Number Range: ${label.serialRange}<br>
+                Rev: ${label.rev} | CN: ${label.cn}<br>
+                Week Number: ${label.weekNumber} | Quantity: ${label.quantity}<br>
+                Printed By: ${label.printedBy}<br>
+                Notes: ${label.notes}<br>
+                <button onclick='fillForm(${JSON.stringify(label)}); deleteLabel("${label.id}")'>Edit</button>
+                <button onclick='deleteLabel("${label.id}")'>Delete</button>
+              `;
+              partDiv.appendChild(div);
+            });
+
+            companyDiv.appendChild(partDiv);
+          });
+
+          monthDiv.appendChild(companyDiv);
+        });
+
+        labelPreview.appendChild(monthDiv);
       });
     }
 
-    onSnapshot(collection(db, "labels"), renderLabels);
+    onSnapshot(query(collection(db, "labels"), orderBy("date", "desc")), renderGroupedLabels);
     dateField.valueAsDate = new Date();
-    filterCompany.addEventListener("change", () => onSnapshot(collection(db, "labels"), renderLabels));
-    filterDate.addEventListener("change", () => onSnapshot(collection(db, "labels"), renderLabels));
     document.getElementById("saveBtn").addEventListener("click", saveLabel);
   </script>
   <style>
@@ -133,7 +168,7 @@
       background: #e9f5ff;
       border-left: 5px solid #007acc;
       padding: 10px;
-      margin-bottom: 15px;
+      margin: 10px 0 20px 40px;
       border-radius: 6px;
     }
     .form-grid {
@@ -141,6 +176,10 @@
       grid-template-columns: 200px 1fr;
       gap: 10px 20px;
       margin-top: 20px;
+    }
+    h3, h4, h5 {
+      color: #333;
+      margin-bottom: 5px;
     }
   </style>
 </head>
